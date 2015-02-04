@@ -243,6 +243,10 @@ func (r *MultipartReader) LastDelimLine() []byte {
 	return b
 }
 
+func (mr *MultipartReader) FinalBytes() ([]byte, error) {
+	return ioutil.ReadAll(mr.bufReader)
+}
+
 // NextPart returns the next part in the multipart or an error.
 // When there are no more parts, the error io.EOF is returned.
 func (r *MultipartReader) NextPart() (*Part, error) {

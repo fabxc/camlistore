@@ -47,7 +47,7 @@ func (r *run) importFromMailbox(mailbox *imap.MailboxInfo) error {
 	}
 
 	// ss, err := imap.NewSeqSet("0:*")
-	ss, err := imap.NewSeqSet("1:10")
+	ss, err := imap.NewSeqSet("1:250")
 	if err != nil {
 		return err
 	}
@@ -57,12 +57,14 @@ func (r *run) importFromMailbox(mailbox *imap.MailboxInfo) error {
 		return err
 	}
 
-	for _, res := range cmd.Data {
+	for i, res := range cmd.Data {
 		// in general this works just fine but the theoretical possibility of having
 		// attachments greater than memory would make a streaming reader preferable.
 		b := imap.AsBytes(res.MessageInfo().Attrs["BODY[]"])
 		ref, err := r.ms.Store(mbNode, bytes.NewBuffer(b))
 		if err != nil {
+			fmt.Println("error:", ref.String())
+			ioutil.WriteFile("err.in", b, 0644)
 			fmt.Println("Email importer: error importing mail:", err)
 			continue
 		}
@@ -72,9 +74,15 @@ func (r *run) importFromMailbox(mailbox *imap.MailboxInfo) error {
 			fmt.Println("Email importer: error reading mail:", err)
 			continue
 		}
-		fmt.Println("in len:", len(b), "out len:", len(mby), bytes.Equal(b, mby))
-		ioutil.WriteFile(ref.String()+".in", b, 0644)
-		ioutil.WriteFile(ref.String()+".out", mby, 0644)
+		if !bytes.Equal(b, mby) {
+			fmt.Println("mismatch:", ref.String())
+			fmt.Println("in len:", len(b), "out len:", len(mby))
+			ioutil.WriteFile(ref.String()+".in", b, 0644)
+			ioutil.WriteFile(ref.String()+".out", mby, 0644)
+		}
+		if i%10 == 0 {
+			fmt.Println("mails added:", i)
+		}
 
 	}
 
@@ -92,7 +100,6 @@ func (r *run) importMails() error {
 		if err := r.importFromMailbox(res.MailboxInfo()); err != nil {
 			fmt.Println("Email importer: error importing from mailbox:", err)
 		}
-		break
 	}
 	return nil
 }
