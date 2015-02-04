@@ -350,7 +350,6 @@ func (ms *mailStorer) storeBody(sp *storePart, header textproto.MIMEHeader, r io
 
 // storeContentBody stores a multipart file body
 func (ms *mailStorer) storeFile(sp *storePart, header textproto.MIMEHeader, r io.Reader, filename string) error {
-	fmt.Println("storing file", filename)
 	sr := newTrimReader(r)
 	// sr := r
 	var fr io.Reader

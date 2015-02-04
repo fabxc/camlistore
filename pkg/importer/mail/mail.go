@@ -79,8 +79,6 @@ func (r *run) importFromMailbox(mailbox *imap.MailboxInfo) error {
 			fmt.Println("in len:", len(b), "out len:", len(mby))
 			ioutil.WriteFile(ref.String()+".in", b, 0644)
 			ioutil.WriteFile(ref.String()+".out", mby, 0644)
-		} else {
-			// fmt.Println("match:", len(b), len(mby))
 		}
 		if i%10 == 0 {
 			fmt.Println("mails added:", i)
