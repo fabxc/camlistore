@@ -47,7 +47,7 @@ func (r *run) importFromMailbox(mailbox *imap.MailboxInfo) error {
 	}
 
 	// ss, err := imap.NewSeqSet("0:*")
-	ss, err := imap.NewSeqSet("1:250")
+	ss, err := imap.NewSeqSet("1:1000")
 	if err != nil {
 		return err
 	}
@@ -79,6 +79,8 @@ func (r *run) importFromMailbox(mailbox *imap.MailboxInfo) error {
 			fmt.Println("in len:", len(b), "out len:", len(mby))
 			ioutil.WriteFile(ref.String()+".in", b, 0644)
 			ioutil.WriteFile(ref.String()+".out", mby, 0644)
+		} else {
+			// fmt.Println("match:", len(b), len(mby))
 		}
 		if i%10 == 0 {
 			fmt.Println("mails added:", i)

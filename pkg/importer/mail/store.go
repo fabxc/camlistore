@@ -174,6 +174,7 @@ type storePart struct {
 	footer []byte
 	parts  []schema.BytesPart
 	size   int64
+	node   *importer.Object
 }
 
 func (ms *mailStorer) Store(parent *importer.Object, r io.Reader) (blob.Ref, error) {
@@ -193,6 +194,7 @@ func (ms *mailStorer) Store(parent *importer.Object, r io.Reader) (blob.Ref, err
 		// reserve first slot for header
 		parts: make([]schema.BytesPart, 1, 16),
 		size:  0,
+		node:  parent,
 	}
 
 	err = ms.storeBody(sp, header, bufReader)
@@ -269,13 +271,22 @@ func (ms *mailStorer) Store(parent *importer.Object, r io.Reader) (blob.Ref, err
 // storeBody stores a multipart body.
 func (ms *mailStorer) storeBody(sp *storePart, header textproto.MIMEHeader, r io.Reader) error {
 	ct := header.Get("Content-Type")
-	mediaType, params, err := mime.ParseMediaType(ct)
+	mediaTypeCt, params, err := mime.ParseMediaType(ct)
 	if err != nil {
 		return err
 	}
+	filename := ""
+	cd := header.Get("Content-Disposition")
+	if cd != "" {
+		_, cdparams, err := mime.ParseMediaType(cd)
+		if err != nil {
+			return err
+		}
+		filename = cdparams["filename"]
+	}
 
-	if !strings.HasPrefix(mediaType, "multipart/") {
-		return ms.storeFile(sp, header, r, params["filename"])
+	if !strings.HasPrefix(mediaTypeCt, "multipart/") {
+		return ms.storeFile(sp, header, r, filename)
 	}
 
 	br := bufio.NewReader(r)
@@ -339,6 +350,7 @@ func (ms *mailStorer) storeBody(sp *storePart, header textproto.MIMEHeader, r io
 
 // storeContentBody stores a multipart file body
 func (ms *mailStorer) storeFile(sp *storePart, header textproto.MIMEHeader, r io.Reader, filename string) error {
+	fmt.Println("storing file", filename)
 	sr := newTrimReader(r)
 	// sr := r
 	var fr io.Reader
@@ -356,6 +368,15 @@ func (ms *mailStorer) storeFile(sp *storePart, header textproto.MIMEHeader, r io
 	fref, err := schema.WriteFileFromReader(ms.br, filename, fr)
 	if err != nil {
 		return err
+	}
+	if filename != "" {
+		anode, err := sp.node.ChildPathObject(filename)
+		if err != nil {
+			return err
+		}
+		if err = anode.SetAttr("camliContent", fref.String()); err != nil {
+			return err
+		}
 	}
 
 	// create new bytes ref with same blobs as the file object
