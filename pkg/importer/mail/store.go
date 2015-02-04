@@ -130,10 +130,10 @@ type linebreakWriter struct {
 }
 
 func (lw *linebreakWriter) Write(d []byte) (n int, err error) {
-	fmt.Println("write:", string(d))
 	var m int
-	for len(d) > n+lw.lineLength-lw.curLineLength {
-		m, err = lw.w.Write(d[n : n+lw.lineLength-lw.curLineLength])
+	to := n + lw.lineLength - lw.curLineLength
+	for len(d) > to {
+		m, err = lw.w.Write(d[n:to])
 		n += m
 		if err != nil {
 			return
@@ -143,6 +143,7 @@ func (lw *linebreakWriter) Write(d []byte) (n int, err error) {
 			return
 		}
 		lw.curLineLength = 0
+		to = n + lw.lineLength - lw.curLineLength
 	}
 	if len(d) > n {
 		m, err = lw.w.Write(d[n:])
@@ -150,7 +151,7 @@ func (lw *linebreakWriter) Write(d []byte) (n int, err error) {
 		if err != nil {
 			return
 		}
-		lw.curLineLength = m
+		lw.curLineLength += m
 	}
 	return
 }
@@ -219,7 +220,6 @@ func (ms *mailStorer) Store(parent *importer.Object, r io.Reader) (blob.Ref, err
 	// TODO fix mismatch int64 vs uint64
 	err = bb.PopulateParts(sp.size, sp.parts)
 	if err != nil {
-		fmt.Println(1, err)
 		return blob.Ref{}, err
 	}
 	mb := bb.Blob()
@@ -227,7 +227,6 @@ func (ms *mailStorer) Store(parent *importer.Object, r io.Reader) (blob.Ref, err
 	if err != nil {
 		return blob.Ref{}, err
 	}
-	fmt.Println(">>>> stored:", mb.BlobRef())
 
 	date, err := mail.Header(header).Date()
 	if err != nil {
@@ -329,20 +328,24 @@ func (ms *mailStorer) storeBody(sp *storePart, header textproto.MIMEHeader, r io
 	}
 	sp.header = headerBytes
 	sp.footer = append(finalBytes, mr.LastDelimLine()...)
+	fbts, err := mr.FinalBytes()
+	if err != nil {
+		return err
+	}
+	sp.footer = append(sp.footer, fbts...)
 
 	return nil
 }
 
 // storeContentBody stores a multipart file body
 func (ms *mailStorer) storeFile(sp *storePart, header textproto.MIMEHeader, r io.Reader, filename string) error {
-	// sr := &trimReader{br: bufio.NewReader(r)}
-	sr := r
+	sr := newTrimReader(r)
+	// sr := r
 	var fr io.Reader
 	var ls *linebreakSanitizer
 
 	// buf := new(bytes.Buffer)
 	if header.Get("Content-Transfer-Encoding") == "base64" {
-		fmt.Println("has base64")
 		ls = newLinebreakSanitizer()
 		fr = base64.NewDecoder(base64.StdEncoding, io.TeeReader(sr, ls))
 	} else {
@@ -354,7 +357,6 @@ func (ms *mailStorer) storeFile(sp *storePart, header textproto.MIMEHeader, r io
 	if err != nil {
 		return err
 	}
-	fmt.Println("wrote file", fref)
 
 	// create new bytes ref with same blobs as the file object
 	// and additional information to restore the contents exactly
@@ -401,12 +403,9 @@ func (ms *mailStorer) storeFile(sp *storePart, header textproto.MIMEHeader, r io
 		Size:     uint64(fileBlob.PartsSize()),
 	})
 	// add sourrounding \n and \r
-	if ls != nil {
-		hbts, fbts := ls.TrimmedBytes()
-		fmt.Println("trimmed: ", strconv.Quote(string(hbts)), strconv.Quote(string(fbts)))
-		sp.header = append(sp.header, hbts...)
-		sp.footer = append(fbts, sp.footer...)
-	}
+	sp.header = append(sp.header, sr.LeftBytes()...)
+	sp.footer = append(sr.RightBytes(), sp.footer...)
+	
 	return nil
 }
 
@@ -427,6 +426,85 @@ func getPathObj(parent *importer.Object, path []string) (*importer.Object, error
 	return parent, nil
 }
 
+type trimReader struct {
+	wrapped io.Reader
+
+	left, right []byte
+	wbuf, cbuf  []byte
+	started     bool
+}
+
+func newTrimReader(r io.Reader) *trimReader {
+	return &trimReader{
+		wrapped: r,
+		left:    make([]byte, 0, 256),
+		right:   make([]byte, 0, 256),
+		started: false,
+		wbuf:    make([]byte, 0, 256),
+		cbuf:    make([]byte, 0, 256),
+	}
+}
+
+func (tr *trimReader) Read(d []byte) (n int, err error) {
+	var m, nn int
+	// flush char buffer
+	nn = copy(d, tr.cbuf)
+	n += nn
+	d = d[nn:]
+	tr.cbuf = tr.cbuf[nn:]
+
+	b := make([]byte, len(d))
+	m, err = tr.wrapped.Read(b[len(tr.cbuf):])
+	if err != nil && err != io.EOF {
+		return
+	}
+	b = b[:m]
+
+	if !tr.started {
+		for i, c := range b {
+			if c == '\r' || c == '\n' {
+				tr.left = append(tr.left, c)
+				continue
+			}
+			tr.started = true
+			n = copy(d, b[i:])
+			return
+		}
+		return
+	}
+
+	for _, c := range b {
+		if c == '\r' || c == '\n' {
+			tr.right = append(tr.right, c)
+			continue
+		}
+		tr.right = tr.right[:0]
+		// buffered whitespaces from previous reads are flushed
+		if len(tr.wbuf) > 0 {
+			nn = copy(d, tr.wbuf)
+			n += nn
+			d = d[nn:]
+			tr.wbuf = tr.wbuf[nn:]
+		}
+	}
+
+	if end := len(b) - len(tr.right); end > 0 {
+		nn = copy(d, b[:end])
+		n += nn
+		tr.wbuf = append(tr.wbuf, b[end:]...)
+		tr.cbuf = append(tr.cbuf, b[nn:end]...)
+	}
+	return
+}
+
+func (tr *trimReader) LeftBytes() []byte {
+	return tr.left
+}
+
+func (tr *trimReader) RightBytes() []byte {
+	return tr.right
+}
+
 // linebreakSanitizer wraps a io.Reader and checks if its content's
 // have a consistent line padding, that is, all except for the last
 // line a seperated after the same number of characters and by the
@@ -445,7 +523,7 @@ type linebreakSanitizer struct {
 
 func newLinebreakSanitizer() *linebreakSanitizer {
 	return &linebreakSanitizer{
-		buf: new(bytes.Buffer),
+		buf:          new(bytes.Buffer),
 		firstLineLen: -1,
 	}
 }
@@ -468,8 +546,7 @@ func (ls *linebreakSanitizer) Write(d []byte) (n int, err error) {
 	n, err = ls.buf.Write(d)
 	if err != nil || ls.err != nil {
 		return
-	}	
-	fmt.Println("read:", string(d))
+	}
 
 	for _, c := range d[:n] {
 		if c == '\n' {
@@ -493,106 +570,6 @@ func (ls *linebreakSanitizer) Write(d []byte) (n int, err error) {
 	}
 	return
 }
-
-// trimReader wraps a bufio.Reader and returns its contents trimmed off of any
-// sourrounding \r and \n characters
-// type trimReader struct {
-// 	br             *bufio.Reader
-// 	contentStarted bool
-// 	pre, post      []byte
-// 	endBuf         []byte
-// }
-
-// // Read trimed data from the wrapped bufio.Reader.
-// func (tr *trimReader) Read(d []byte) (int, error) {
-// 	if !tr.contentStarted {
-// 		tr.pre = make([]byte, 0, 23)
-// 		for {
-// 			c, err := tr.br.ReadByte()
-// 			if err != nil {
-// 				return 0, err
-// 			}
-// 			if c != '\n' && c != '\r' {
-// 				if err := tr.br.UnreadByte(); err != nil {
-// 					return 0, err
-// 				}
-// 				tr.contentStarted = true
-// 				break
-// 			}
-// 			tr.pre = append(tr.pre, c)
-// 		}
-// 		return tr.Read(d)
-
-// 	} else if tr.endBuf != nil {
-// 		n := copy(d, tr.endBuf)
-// 		if n < len(tr.endBuf) {
-// 			tr.endBuf = tr.endBuf[n:]
-// 			return n, nil
-// 		}
-// 		return n, io.EOF
-
-// 	} else {
-// 		i := 0
-// 		nn := 0
-// 		for {
-// 			// we go ahead and assume that there will not be more than 1024 cr or lf
-// 			// chars after the actual content and that the buffer size is >= 1024
-// 			// TODO: same issue as in mime/multipart due to missing buffer size accessor
-// 			pb, err := tr.br.Peek(1024)
-// 			if err == io.EOF {
-// 				contentEnd := 0
-// 				// check for trailing cr and lf
-// 				for i := len(pb) - 1; i >= 0; i-- {
-// 					c := pb[i]
-// 					if c != '\n' && c != '\r' {
-// 						contentEnd = i + 1
-// 						break
-// 					}
-// 				}
-// 				tr.post = pb[contentEnd:]
-
-// 				to := i*1024 + contentEnd
-// 				if len(d) < to {
-// 					tr.endBuf = pb[len(d):contentEnd]
-// 					to = len(d)
-// 				}
-// 				n, err := tr.br.Read(d[i*1024 : to])
-// 				nn += n
-// 				if err != nil {
-// 					return nn, err
-// 				}
-// 				if n < contentEnd {
-// 					return nn, nil
-// 				}
-// 				return nn, io.EOF
-// 			}
-// 			if err != nil {
-// 				return 0, err
-// 			}
-// 			// read another 1024 byte chunk or less if d is too short
-// 			to := (i + 1) * 1024
-// 			if len(d) < to {
-// 				to = len(d)
-// 			}
-// 			n, err := tr.br.Read(d[i*1024 : to])
-// 			nn += n
-// 			if err != nil {
-// 				return nn, err
-// 			}
-// 			if nn == len(d) {
-// 				break
-// 			}
-// 			i++
-// 		}
-// 		return nn, nil
-// 	}
-// }
-
-// // TrimmedBytes returns the bytes that pre- and suceeded the readers'
-// // contents. It only returns valid slices after the reader has been read up to io.EOF.
-// func (tr *trimReader) TrimmedBytes() ([]byte, []byte) {
-// 	return tr.pre, tr.post
-// }
 
 // read until first double linebreak and return the
 // bytes read so far including the linebreaks
