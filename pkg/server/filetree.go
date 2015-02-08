@@ -35,8 +35,16 @@ func (fth *FileTreeHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		http.Error(rw, "Invalid method", 400)
 		return
 	}
-	ret := make(map[string]interface{})
-	defer httputil.ReturnJSON(rw, ret)
+
+	type Child struct {
+		Name    string   `json:"name"`
+		Type    string   `json:"type"`
+		BlobRef blob.Ref `json:"blobRef"`
+	}
+	var ret struct {
+		Children []Child `json:"children"`
+	}
+	defer httputil.ReturnJSON(rw, &ret)
 
 	de, err := schema.NewDirectoryEntryFromBlobRef(fth.Fetcher, fth.file)
 	if err != nil {
@@ -56,14 +64,13 @@ func (fth *FileTreeHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		log.Printf("reading dir from blobref %s: %v\n", fth.file, err)
 		return
 	}
-	children := make([]map[string]interface{}, 0)
+	ret.Children = make([]Child, 0, len(entries))
 	for _, v := range entries {
-		child := map[string]interface{}{
-			"name":    v.FileName(),
-			"type":    v.CamliType(),
-			"blobRef": v.BlobRef(),
+		ch := Child{
+			Name:    v.FileName(),
+			Type:    v.CamliType(),
+			BlobRef: v.BlobRef(),
 		}
-		children = append(children, child)
+		ret.Children = append(ret.Children, ch)
 	}
-	ret["children"] = children
 }

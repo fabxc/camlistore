@@ -53,7 +53,6 @@ func handleRemove(conn http.ResponseWriter, req *http.Request, storage blobserve
 
 	n := 0
 	toRemove := make([]blob.Ref, 0)
-	toRemoveStr := make([]string, 0)
 	for {
 		n++
 		if n > maxRemovesPerRequest {
@@ -72,7 +71,6 @@ func handleRemove(conn http.ResponseWriter, req *http.Request, storage blobserve
 			return
 		}
 		toRemove = append(toRemove, ref)
-		toRemoveStr = append(toRemoveStr, ref.String())
 	}
 
 	err := storage.RemoveBlobs(toRemove)
@@ -83,7 +81,8 @@ func handleRemove(conn http.ResponseWriter, req *http.Request, storage blobserve
 		return
 	}
 
-	reply := make(map[string]interface{}, 0)
-	reply["removed"] = toRemoveStr
-	httputil.ReturnJSON(conn, reply)
+	rm := struct {
+		Removed []blob.Ref `json:"removed"`
+	}{toRemove}
+	httputil.ReturnJSON(conn, &rm)
 }

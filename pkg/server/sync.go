@@ -236,11 +236,17 @@ func newIdleSyncHandler(fromName, toName string) *SyncHandler {
 	}
 }
 
-func (sh *SyncHandler) discoveryMap() map[string]interface{} {
-	return map[string]interface{}{
-		"from":    sh.fromName,
-		"to":      sh.toName,
-		"toIndex": sh.toIndex,
+type SyncHandlerDiscovery struct {
+	From    string `json:"from"`
+	To      string `json:"to"`
+	ToIndex bool   `json:"toIndex"`
+}
+
+func (sh *SyncHandler) discovery() SyncHandlerDiscovery {
+	return SyncHandlerDiscovery{
+		From:    sh.fromName,
+		To:      sh.toName,
+		ToIndex: sh.toIndex,
 	}
 }
 

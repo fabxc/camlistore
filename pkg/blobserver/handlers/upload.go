@@ -124,11 +124,7 @@ func vivify(blobReceiver blobserver.BlobReceiveConfiger, fileblob blob.SizedRef)
 	if !ok {
 		return errors.New("handler is not a JSON signhandler")
 	}
-	discoMap := sigHelper.DiscoveryMap(JSONSignRoot)
-	publicKeyBlobRef, ok := discoMap["publicKeyBlobRef"].(string)
-	if !ok {
-		return fmt.Errorf("Discovery: json decoding error: %v", err)
-	}
+	publicKeyBlobRef := sigHelper.Discovery(JSONSignRoot).PublicKeyBlobRef
 
 	// The file schema must have a modtime to vivify, as the modtime is used for all three of:
 	// 1) the permanode's signature
@@ -140,7 +136,7 @@ func vivify(blobReceiver blobserver.BlobReceiveConfiger, fileblob blob.SizedRef)
 	}
 
 	permanodeBB := schema.NewHashPlannedPermanode(h)
-	permanodeBB.SetSigner(blob.MustParse(publicKeyBlobRef))
+	permanodeBB.SetSigner(publicKeyBlobRef)
 	permanodeBB.SetClaimDate(claimDate)
 	permanodeSigned, err := sigHelper.Sign(permanodeBB)
 	if err != nil {
@@ -153,7 +149,7 @@ func vivify(blobReceiver blobserver.BlobReceiveConfiger, fileblob blob.SizedRef)
 	}
 
 	contentClaimBB := schema.NewSetAttributeClaim(permanodeRef, "camliContent", fileblob.Ref.String())
-	contentClaimBB.SetSigner(blob.MustParse(publicKeyBlobRef))
+	contentClaimBB.SetSigner(publicKeyBlobRef)
 	contentClaimBB.SetClaimDate(claimDate)
 	contentClaimSigned, err := sigHelper.Sign(contentClaimBB)
 	if err != nil {
